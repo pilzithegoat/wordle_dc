@@ -210,20 +210,24 @@ class GuessModal(Modal, title="Wordle Rateversuch"):
             word=self.game.secret_word,
             duration=self.game.get_duration()
         )
+    
+        final_view = View(timeout=60)
         
-        final_view = View(timeout=3600)
-        
-        @ui.button(label="Neues Spiel", style=discord.ButtonStyle.success, emoji="🔄")
-        async def new_game_button(interaction: discord.Interaction, button: Button):
+        new_game_btn = Button(label="Neues Spiel", style=discord.ButtonStyle.success, emoji="🔄")
+        stats_btn = Button(label="Statistiken", style=discord.ButtonStyle.primary, emoji="📊")
+    
+        async def new_game_callback(interaction: discord.Interaction):
             await cog.start_new_game(interaction)
-            
-        @ui.button(label="Statistiken", style=discord.ButtonStyle.primary, emoji="📊")
-        async def stats_button(interaction: discord.Interaction, button: Button):
+    
+        async def stats_callback(interaction: discord.Interaction):
             await cog.show_stats(interaction)
-            
-        final_view.add_item(new_game_button)
-        final_view.add_item(stats_button)
-        
+    
+        new_game_btn.callback = new_game_callback
+        stats_btn.callback = stats_callback
+
+        final_view.add_item(new_game_btn)
+        final_view.add_item(stats_btn)
+    
         try:
             message = await interaction.channel.fetch_message(self.game.message_id)
             await message.edit(view=final_view)
@@ -372,12 +376,12 @@ class WordleCog(commands.Cog):
         # Korrigierte Felder
         embed.add_field(
             name="🎯 Durchschn. Versuche", 
-            value=f"{(sum(g['attempts'] for g in self.history.games)/total_games:.1f}" if total_games else "-", 
+            value=f"{sum(g['attempts'] for g in self.history.games)/total_games:.1f}" if total_games else "-", 
             inline=True
         )
         embed.add_field(
             name="💡 Durchschn. Tipps", 
-            value=f"{(sum(g['hints'] for g in self.history.games)/total_games:.1f}" if total_games else "-", 
+            value=f"{sum(g['hints'] for g in self.history.games)/total_games:.1f}" if total_games else "-", 
             inline=True
         )
         embed.add_field(
