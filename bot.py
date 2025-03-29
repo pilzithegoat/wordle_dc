@@ -1102,7 +1102,7 @@ class WordleCog(commands.Cog):
         embed.add_field(name="Hinweis", value=f"`{game.hint_display}`", inline=False)
         
         if guess.lower() == game.secret_word or game.remaining == 0:
-            await self.handle_end_game(interaction, guess.lower() == game.secret_word)
+            await self.handle_end_game(interaction, guess.lower() == game.secret_word, is_daily=is_daily)
         else:
             view = GameView(self, interaction.user.id)
             await interaction.response.edit_message(embed=embed, view=view)
@@ -1135,7 +1135,7 @@ class WordleCog(commands.Cog):
             view=view
         )
 
-    async def handle_end_game(self, interaction: discord.Interaction, won: bool):
+    async def handle_end_game(self, interaction: discord.Interaction, won: bool, is_daily: bool = False):
         game = self.games.pop(interaction.user.id, None)
         if not game:
             return
@@ -1174,7 +1174,9 @@ class WordleCog(commands.Cog):
 
         if is_daily:
             self.daily_challenge.add_participant(interaction.user.id, len(game.attempts))
-            embed.add_field(name="Daily Challenge", value=f"🏆 Du bist Platz {self.get_daily_rank(interaction.user.id)}!", inline=False)
+            embed.add_field(name="Daily Challenge", 
+                      value=f"🏆 Du bist Platz {self.get_daily_rank(interaction.user.id)}!",
+                      inline=False)
 
         if game.secret_word == self.daily_challenge.get_daily_word():
             self.daily_challenge.add_participant(interaction.user.id, len(game.attempts))
@@ -1371,23 +1373,27 @@ class WordleCog(commands.Cog):
             return next((i+1 for i, (u_id, _) in enumerate(leaderboard) if u_id == user_str), None)
 
     @app_commands.command(name="achievements", description="Zeige deine Achievements")
-    async def show_achievements(self, interaction: discord.Interaction):
+    async def _show_achievements(self, interaction: discord.Interaction):
         user_achievements = self.history.data["achievements"].get(str(interaction.user.id), {})
-        
+    
         embed = discord.Embed(
-            title=f"🏆 Achievements - {interaction.user.display_name}",
-            color=discord.Color.gold()
+        title=f"🏆 Achievements - {interaction.user.display_name}",
+        color=discord.Color.gold()
         )
-        
+    
         for achievement_id, data in self.achievement_system.ACHIEVEMENTS.items():
             status = "✅ " + datetime.fromisoformat(user_achievements[achievement_id]).strftime("%d.%m.%Y") if achievement_id in user_achievements else "❌"
             embed.add_field(
-                name=f"{data['name']} {status}",
-                value=data['description'],
-                inline=False
+            name=f"{data['name']} {status}",
+            value=data['description'],
+            inline=False
             )
-        
+    
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="achievements", description="Zeige deine Achievements")
+    async def show_achievements_command(self, interaction: discord.Interaction):
+        await self._show_achievements(interaction)
 
     @app_commands.command(name="dailylb", description="Daily Challenge Bestenliste")
     async def daily_leaderboard(self, interaction: discord.Interaction):
@@ -1489,18 +1495,23 @@ class MainMenu(View):
     async def new_game_callback(self, interaction: discord.Interaction):
         await self.cog.start_new_game(interaction)
 
+# In der MainMenu-Klasse:
     async def menu_select(self, interaction: discord.Interaction):
         choice = interaction.data["values"][0]
         handlers = {
-            "daily": self.cog.handle_daily,
-            "achievements": self.cog.show_achievements,
-            "leaderboard": self.cog.show_leaderboard,
-            "stats": self.cog.show_own_stats,
-            "history": self.cog.show_own_history,
-            "settings": self.cog.open_settings,
-            "help": self.cog.show_help
+        "daily": self.cog.handle_daily,
+        "achievements": self.cog._show_achievements,
+        "leaderboard": self.cog.show_leaderboard,
+        "stats": self.cog.show_own_stats,
+        "history": self.cog.show_own_history,
+        "settings": self.cog.open_settings,
+        "help": self.cog.show_help
         }
-        await handlers[choice](interaction)
+        handler = handlers.get(choice)
+        if handler:
+            await handler(interaction)  # 👈 Korrekter Methodenaufruf
+        else:
+            await interaction.response.send_message("❌ Ungültige Auswahl!", ephemeral=True)
 
     async def show_daily_options(self, interaction: discord.Interaction):
         """Zeigt Daily-Challenge-Optionen an"""
@@ -1554,23 +1565,29 @@ class GameView(View):
             if interaction.user.id != self.user_id:
                 await interaction.response.send_message("❌ Nicht dein Spiel!", ephemeral=True)
                 return False
-            
+        
             custom_id = interaction.data["custom_id"]
-            
+        
             if custom_id == "guess_button":
                 await interaction.response.send_modal(GuessModal(self.cog))
             elif custom_id == "hint_button":
                 await self.cog.handle_give_hint(interaction)
             elif custom_id == "quit_button":
                 await self.cog.handle_end_game(interaction, False)
-                
+            
             return False
         except Exception as e:
+            if not interaction.response.is_done():  # 👈 Prüfen ob bereits geantwortet wurde
+                await interaction.response.send_message(
+                    "⚠️ Ein Fehler ist aufgetreten! Bitte versuche es erneut.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(  # 👈 followup verwenden
+                    "⚠️ Ein Fehler ist aufgetreten!",
+                    ephemeral=True
+                )
             print(f"Interaktionsfehler: {str(e)}")
-            await interaction.response.send_message(
-                "⚠️ Ein Fehler ist aufgetreten! Bitte versuche es erneut.",
-                ephemeral=True
-            )
 
 class GuessModal(Modal, title="Wort eingeben"):
     guess = TextInput(label="Dein 5-Buchstaben-Wort", min_length=5, max_length=5, custom_id="guess_input")
@@ -1687,7 +1704,7 @@ class AchievementSystem:
         },
         "veteran": {
             "name": "Veteran 🏆",
-            "condition": lambda _, count: count >= 100,
+            "condition": lambda count: count >= 100,
             "description": "Spiele 100 Spiele"
         }
     }
@@ -1710,7 +1727,11 @@ class AchievementSystem:
         for achievement_id, data in self.ACHIEVEMENTS.items():
             if achievement_id not in user_achievements:
                 try:
-                    if data["condition"](game) or (achievement_id == "veteran" and data["condition"](None, total_games)):
+                    if achievement_id == "veteran":
+                        if data["condition"](total_games):  # 👈 Nur total_games übergeben
+                            user_achievements[achievement_id] = datetime.now().isoformat()
+                            new_achievements.append(data)
+                    elif data["condition"](game):
                         user_achievements[achievement_id] = datetime.now().isoformat()
                         new_achievements.append(data)
                 except Exception as e:
